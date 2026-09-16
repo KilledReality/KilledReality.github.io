@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="ashana" x1="8" y1="56" x2="56" y2="8" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#d4a74f"/>
+      <stop offset="0.48" stop-color="#f0d487"/>
+      <stop offset="1" stop-color="#4da9a7"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="12" fill="#101516"/>
+  <rect x="4" y="4" width="56" height="56" rx="10" fill="url(#ashana)"/>
+  <path d="M5 46 23 5h14L59 26v34H31Z" fill="#101516" opacity=".16"/>
+  <text x="32" y="40" text-anchor="middle" fill="#101516" font-family="Arial, sans-serif" font-size="25" font-weight="900">ГА</text>
+</svg>

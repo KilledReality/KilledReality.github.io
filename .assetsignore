@@ -1,0 +1,28 @@
+**/.git
+**/.git/**
+**/.wrangler
+**/.wrangler/**
+.wrangler-dry-run
+.wrangler-dry-run/**
+.dev.vars*
+.assetsignore
+.gitignore
+worker.js
+wrangler.toml
+supabase-*.sql
+README.md
+skills.txt
+PLAY_*.cmd
+game
+game/**
+paper-throne-game
+paper-throne-game/**
+recovery
+recovery/**
+task game
+task game/**
+tmp
+tmp/**
+node_modules
+node_modules/**
+*.log
