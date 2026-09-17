@@ -61,6 +61,9 @@ let dataProtectionLoading = false;
 let dataProtectionError = "";
 let rollSubscription = null;
 let campaignEntrySubscription = null;
+let mirrorPollingTimer = null;
+let mirrorPollInFlight = false;
+let lastMirrorPollUpdatedAt = null;
 const minigameLeaderboardCache = new Map();
 
 const wikiCategories = [
@@ -4612,6 +4615,7 @@ async function loadCloudState(options = {}) {
     const remoteState = normalizeState({ ...structuredClone(seedData), ...data.data });
     lastCloudSnapshot = compactStateForStorage(remoteState);
     lastCloudUpdatedAt = data.updated_at || null;
+    lastMirrorPollUpdatedAt = lastCloudUpdatedAt;
     state = remoteState;
     if (pendingCloudSave) {
       const recovered = mergeConcurrentCampaignState(
@@ -4635,6 +4639,7 @@ async function loadCloudState(options = {}) {
   } else {
     lastCloudSnapshot = compactStateForStorage(state);
     lastCloudUpdatedAt = data?.updated_at || null;
+    lastMirrorPollUpdatedAt = lastCloudUpdatedAt;
     cloudStateReady = true;
     if (options.canSeed) await saveCloudState({ allowUninitialized: true, skipTrashDiff: true });
   }
@@ -4724,6 +4729,35 @@ function subscribeCloudRolls() {
     .subscribe((status) => {
       if (status === "CHANNEL_ERROR") console.warn("Realtime журнала бросков недоступен");
     });
+}
+
+async function pollMirrorUpdates() {
+  if (mirrorPollInFlight || !cloudStateReady || cloudSaveDirty || cloudSaveInFlight || document.visibilityState !== "visible") return;
+  mirrorPollInFlight = true;
+  try {
+    const { data: revision, error: revisionError } = await supabaseClient.from("campaign_state")
+      .select("updated_at").eq("id", "main").single();
+    if (revisionError) throw revisionError;
+    if (revision?.updated_at && revision.updated_at !== lastMirrorPollUpdatedAt) {
+      const { data: current, error: currentError } = await supabaseClient.from("campaign_state")
+        .select("data,updated_at").eq("id", "main").single();
+      if (currentError) throw currentError;
+      mergePublicCampaignEntries(current.data);
+      lastMirrorPollUpdatedAt = current.updated_at;
+    }
+    const previousRollIds = state.rolls.map((roll) => roll.id).join(",");
+    if (await loadCloudRolls() && previousRollIds !== state.rolls.map((roll) => roll.id).join(",")) {
+      if (["roller", "dashboard"].includes(currentView)) render();
+    }
+    if (currentView === "minigame") {
+      minigameLeaderboardCache.clear();
+      refreshVisibleMinigameLeaderboards(true);
+    }
+  } catch (error) {
+    console.warn("Синхронизация зеркала временно недоступна:", error.message);
+  } finally {
+    mirrorPollInFlight = false;
+  }
 }
 
 function normalizeCloudRoll(row) {
@@ -4888,8 +4922,15 @@ function initSupabase() {
     return;
   }
   supabaseClient = supabaseFactory.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-  subscribeCloudRolls();
-  subscribePublicCampaignEntries();
+  if (SUPABASE_URL === SUPABASE_ORIGIN) {
+    subscribeCloudRolls();
+    subscribePublicCampaignEntries();
+  } else if (!mirrorPollingTimer) {
+    mirrorPollingTimer = setInterval(pollMirrorUpdates, 45000);
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") pollMirrorUpdates();
+    });
+  }
   supabaseClient.auth.getSession().then(async ({ data }) => {
     await applySupabaseSession(data.session);
   });
