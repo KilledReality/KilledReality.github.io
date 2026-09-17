@@ -26,7 +26,8 @@ const ogreWikiArticles = Array.isArray(globalThis.PF1_OGRE_WIKI_ARTICLES)
 const harpyWikiArticles = Array.isArray(globalThis.PF1_HARPY_WIKI_ARTICLES)
   ? globalThis.PF1_HARPY_WIKI_ARTICLES
   : [];
-const SUPABASE_URL = "https://msthqpeisopneallhkpk.supabase.co";
+const SUPABASE_ORIGIN = "https://msthqpeisopneallhkpk.supabase.co";
+const SUPABASE_URL = globalThis.ASHANA_SUPABASE_URL || SUPABASE_ORIGIN;
 const SUPABASE_ANON_KEY = "sb_publishable_Qp0Z8J0uymysKz7KJRYUdA__74_rnbj";
 const SUPABASE_BUCKET = "ashana-media";
 const CLOUD_SAVE_CLIENT_VERSION = "2026-08-27.1";
@@ -4579,13 +4580,27 @@ async function loadCloudState(options = {}) {
   coreRaceMigrationNeedsCloudSave = false;
   const pendingCloudSave = (options.canSeed || requiresAdminCloudSave()) ? loadPendingCloudSave() : null;
   const uiState = loadUiState();
-  const { data, error } = await supabaseClient.from("campaign_state").select("data,updated_at").eq("id", "main").single();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15000);
+  let data;
+  let error;
+  try {
+    ({ data, error } = await supabaseClient.from("campaign_state")
+      .select("data,updated_at").eq("id", "main").abortSignal(controller.signal).single());
+  } catch (loadError) {
+    error = loadError;
+  } finally {
+    clearTimeout(timeout);
+  }
   if (error) {
-    cloudStatus = `Ошибка загрузки облака: ${error.message}`;
+    const reason = controller.signal.aborted ? "превышено время ожидания" : error.message;
+    cloudStatus = `Ошибка загрузки облака: ${reason}`;
     if (pendingCloudSave) reportCriticalSaveFailure(`Не удалось загрузить общую базу для отправки аварийной копии: ${error.message}`);
+    showCloudReadFailure(reason);
     renderCloudStatus();
     return false;
   }
+  hideCloudReadFailure();
   if (data?.data && Object.keys(data.data).length) {
     const remoteContentMigrations = Array.isArray(data.data.meta?.contentMigrations)
       ? data.data.meta.contentMigrations.map(String)
@@ -4868,6 +4883,7 @@ function initSupabase() {
   const supabaseFactory = globalThis.supabase;
   if (!supabaseFactory?.createClient) {
     cloudStatus = "Supabase SDK не загружен";
+    showCloudReadFailure("модуль подключения к базе не загрузился");
     renderCloudStatus();
     return;
   }
@@ -4953,6 +4969,47 @@ function renderCloudStatus() {
   quickLoginButton.textContent = supabaseUser ? "Выйти" : "Войти";
 }
 
+function showCloudReadFailure(reason) {
+  let overlay = document.querySelector("#cloudReadFailureOverlay");
+  if (!overlay) {
+    overlay = document.createElement("div");
+    overlay.id = "cloudReadFailureOverlay";
+    overlay.className = "critical-save-overlay";
+    overlay.setAttribute("role", "alertdialog");
+    overlay.setAttribute("aria-modal", "true");
+    overlay.innerHTML = `
+      <section class="critical-save-card">
+        <p class="critical-save-kicker">НЕТ СВЯЗИ С ОБЩЕЙ БАЗОЙ</p>
+        <h2>ДАННЫЕ МОГУТ БЫТЬ УСТАРЕВШИМИ</h2>
+        <p class="critical-save-message"></p>
+        <p class="critical-save-safety">Сейчас показана локальная копия этого браузера, а не подтверждённая версия сайта. Не редактируйте её, пока связь не восстановится.</p>
+        <div class="critical-save-actions">
+          <button class="primary-button" type="button" data-action="retry">Повторить подключение</button>
+          <button class="ghost-button" type="button" data-action="offline">Посмотреть локальную копию</button>
+        </div>
+      </section>`;
+    document.body.append(overlay);
+    overlay.querySelector('[data-action="retry"]').addEventListener("click", async (event) => {
+      const button = event.currentTarget;
+      button.disabled = true;
+      button.textContent = "Подключаюсь...";
+      await loadCloudState();
+      button.disabled = false;
+      button.textContent = "Повторить подключение";
+    });
+    overlay.querySelector('[data-action="offline"]').addEventListener("click", () => {
+      overlay.hidden = true;
+    });
+  }
+  overlay.querySelector(".critical-save-message").textContent = `Причина: ${reason}.`;
+  overlay.hidden = false;
+}
+
+function hideCloudReadFailure() {
+  const overlay = document.querySelector("#cloudReadFailureOverlay");
+  if (overlay) overlay.hidden = true;
+}
+
 async function signInSupabase(email, password) {
   if (!supabaseClient) initSupabase();
   if (!supabaseClient) throw new Error("Supabase SDK не загружен");
@@ -4987,7 +5044,8 @@ async function imageFileToUrl(file, folder, options = {}) {
       upsert: false,
     });
     if (!error) {
-      return supabaseClient.storage.from(SUPABASE_BUCKET).getPublicUrl(path).data.publicUrl;
+      return supabaseClient.storage.from(SUPABASE_BUCKET).getPublicUrl(path).data.publicUrl
+        .replace(SUPABASE_URL, SUPABASE_ORIGIN);
     }
     if (options.requireCloudUpload) {
       alert(`${options.label || "Файл"} не загружен в общую базу: ${error.message}. Проверьте права мастера и доступ к Supabase Storage.`);
